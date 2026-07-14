@@ -139,9 +139,28 @@
 
 > Character 顶点保存**当前外貌**，直接读取即可。`CharacterSnapshot` 同时保存每次变化的历史快照——查当前走 Character，查历史走 Snapshot。
 
-**② 能力层（纯标签系统）**：
-采用纯标签系统。角色的能力用描述性短句定义，无数值。示例：`"精通黑魔法防御术"`、`"力大无穷"`、`"擅长潜行"`。
-标签在跑团中通过 Oracle 判定来检定——有关联标签则有利修正，无关联标签则中性，有冲突标签则不利修正。
+**② 能力层（双轨制：tags + abilities）**：
+
+能力系统采用 **tags（向后兼容） + abilities（结构化）** 双轨。
+
+**tags（纯标签，向后兼容）**：保留原有纯字符串列表，用于 Oracle 快速检定匹配。
+示例：`"精通黑魔法防御术"`、`"力大无穷"`、`"擅长潜行"`。
+
+**abilities（结构化能力列表）**：`LIST`，每个条目含以下字段，用于跨世界兼容性判定和精细检定：
+
+| 字段 | 类型 | 说明 | 示例 |
+|:----|:----:|------|------|
+| `name` | string | 能力名称 | `"法印：阿尔德"` |
+| `type` | string | skill / magic / hybrid | `magic` |
+| `power_source` | string | magic / mana / chi / physics / bloodline / alchemy / technology / psionic | `magic` |
+| `world_scope` | string | universal（通用）/ conditional（有条件）/ world_bound（世界绑定） | `world_bound` |
+| `bound_worlds` | list | world_bound 时的可用世界列表 | `["witcher-world"]` |
+| `requires_power` | bool | 是否需要外部能量 | `true` |
+| `acceptable_adapters` | list | 可接受的能量适配器 ID | `["star_core"]` |
+
+**判定优先级**：world_bound → 目标世界不在 bound_worlds 中则 disabled，不进适配器判定。universal → 直接 full。conditional → 走兼容性判定流程（含适配器）。
+
+**Oracle 检定时**：tags 和 abilities 两池都查。tags 条目若与 ability.name 对应则视为同一能力的两种形式。
 
 **③ 跨世界层**：
 `languages_spoken`（会说什么语言）, `world_travel_history`（去过哪些世界）,
@@ -549,20 +568,31 @@ ROUTE 边补充字段：travel_type(normal/warp/hyperlane/jump_drive), warp_time
 | **disabled** | 完全禁用，无法运作 | 魔法物品在纯科学宇宙中失效 |
 
 **判定逻辑**（以魔杖穿越为例）：
+
 ```
-1. 查 COMPATIBILITY_RULE 边：(源世界, 目标世界, 物品类别)
+1. 查 COMPATIBILITY_RULE 边：(源世界, 目标世界, 物品/能力类别)
    └─ 有预定义规则 → 直接返回
 
 2. 无预定义规则 → 自动推断：
    比较 power_source:
    ├─ 相同 → full
-   ├─ 兼容（magic ↔ mana）→ degraded（需转化）
-   └─ 不兼容（magic ↔ science）→ disabled
+   ├─ 兼容（magic ↔ mana, chi ↔ mana, psionic ↔ magic）→ degraded
+   └─ 不兼容（magic ↔ science, alchemy ↔ technology）→ disabled
    比较 technology_level:
    ├─ 目标 > 源 → reinterpreted（被理解为更高级事物）
    └─ 目标 < 源 → degraded（被理解为更原始事物）
 
-3. 特殊豁免（如"该物品是神器"）→ 提升一级
+3. 🆕 适配器介入（仅当步骤2结果为 disabled 且能力 requires_power=true）：
+   检查角色是否持有适配器：
+   ├─ 适配器.compatible_targets 含 能力.power_source？
+   │   ├─ 是 → 按转换效率升级：
+   │   │   效率 ≥ 0.8 → degraded
+   │   │   效率 0.4-0.8 → degraded + 额外消耗
+   │   │   效率 < 0.4 → degraded + 严重限制
+   │   └─ 否 → 保持 disabled
+   └─ world_scope=world_bound 的能力不进入此步骤
+
+4. 特殊豁免（如"该物品是神器"）→ 提升一级
 ```
 
 **判定输出**：
@@ -578,17 +608,29 @@ ROUTE 边补充字段：travel_type(normal/warp/hyperlane/jump_drive), warp_time
 
 目标世界的原生角色在看到外来物品时默认如何理解。
 
-**映射数据结构**：
+**映射数据结构**（物品/能力/适配器通用）：
+
 ```json
 {
   "entry_id": "bridge_wand_01",
+  "item_name": "holly_wand",
+  "item_category": "magical_weapon",
   "source_world": "harry-potter-canon",
   "target_world": "original-fantasy-world",
-  "item_name": "holly_wand",
+  "compatibility": "degraded",
+  "effect_description": "魔杖在 mana 世界中需消耗法力值来驱动",
+  "stat_modifiers": { "power": -2, "duration": "halved" },
   "local_name": "魔杖",
-  "local_understanding": "一种通过 mana 施法的法杖，长约11英寸",
+  "local_understanding": "一种通过 mana 施法的法杖",
   "misconceptions": ["当地人认为只有巫师才能使用"],
-  "reveal_triggers": ["角色在当地人面前展示魔杖时触发默认映射"]
+  "reveal_triggers": ["角色展示时触发"],
+  "perception_difficulty": "medium",
+  "ability_name": "",                     -- 用于 character_ability
+  "adapter_type": "",                     -- 用于 power_adapter
+  "source_power": "",
+  "compatible_targets": [],
+  "conversion_efficiency": 0.0,
+  "usage_limit": ""
 }
 ```
 
@@ -597,10 +639,17 @@ ROUTE 边补充字段：travel_type(normal/warp/hyperlane/jump_drive), warp_time
 - **突破映射**：若外来角色主动解释真相，目标角色需过感知检定才能接受
 - **三层理解**：一级=表面 \| 二级=功能 \| 三级=本质
 
-#### 运行时判定总流程
+#### 运行时判定总流程（五阶段）
 
 ```
-角色/物品触发穿越
+角色/物品/能力触发穿越
+  │
+  ├─ 阶段0：world_scope 优先检查 🆕
+  │   ├─ world_scope = world_bound
+  │   │   ├─ 目标世界 ∈ bound_worlds → 继续
+  │   │   └─ 目标世界 ∉ bound_worlds → ❌ disabled（不进适配器）
+  │   ├─ world_scope = universal → full（跳过阶段1-2）
+  │   └─ world_scope = conditional → 继续
   │
   ├─ 阶段1：通道检查
   │   查 CONNECTS_TO(源→目标)
@@ -612,9 +661,15 @@ ROUTE 边补充字段：travel_type(normal/warp/hyperlane/jump_drive), warp_time
   │   └─ 自动推断或预定义规则
   │   └─ 结果: full/degraded/reinterpreted/disabled
   │
+  ├─ 阶段2b：适配器介入 🆕
+  │   仅当阶段2=disabled 且能力 requires_power=true
+  │   查角色持有适配器
+  │   └─ 匹配 → 按效率升级为 degraded
+  │
   ├─ 阶段3：认知映射
-  │   查 COGNITIVE_MAP(源,目标,物品)
+  │   查 COGNITIVE_MAP(源,目标,物品/能力)
   │   └─ 获取 local_name + understanding + misconceptions
+  │   └─ 🆕 若适配器介入，perception_difficulty 设为 hard
   │
   └─ 阶段4：状态更新
       ├─ 更新 current_world 为目标世界
@@ -833,13 +888,15 @@ ROUTE 边补充字段：travel_type(normal/warp/hyperlane/jump_drive), warp_time
 
 ### 6.1 跨世界能力兼容
 
-物品/能力进入新世界时的**三层判定机制**（定义及详程见 [3.7 跨世界桥接域](#37-跨世界桥接域)）：
+物品/能力进入新世界时的**四层判定机制 + 🆕 适配器介入**（定义及详程见 [3.7 跨世界桥接域](#37-跨世界桥接域)）：
 
-1. **通道存在性**：源世界→目标世界是否有稳定通道？能量消耗多少？
-2. **兼容性等级**：full / degraded / reinterpreted / disabled
-3. **认知映射**：目标世界的原生角色默认如何理解这个外来的物品/能力
+1. 🆕 **world_scope 优先**：world_bound 能力直接禁用于非绑定世界；universal 全域通用
+2. **通道存在性**：源世界→目标世界是否有稳定通道？
+3. **兼容性等级**：full / degraded / reinterpreted / disabled
+4. 🆕 **适配器介入**：disabled 时检查角色是否持有能量适配器，按转换效率降级
+5. **认知映射**：目标世界角色如何理解外来物
 
-> 完整的输入输出数据格式和自动推断逻辑见 [三层判定详程](#三层判定机制详程)。
+> 完整的输入输出数据格式见 [三层判定详程](#三层判定机制详程)。
 
 ### 6.2 认知过滤
 

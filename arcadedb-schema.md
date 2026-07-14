@@ -172,8 +172,32 @@ RelationshipEvent:
 
 | Vertex 类型 | 关键属性 | 索引 |
 |------|------|:----:|
-| Character | character_id (key), display_name, aliases, character_origin, is_party_member, party_join_date, species, birth_date, gender, sexuality, chronological_age, apparent_age, height, hair_color, distinguishing_features (LIST), appearance_summary, typical_attire, nationality, social_class, occupation, origin_world, tags (LIST), languages_spoken (LIST), world_travel_history (LIST), default_cognition, personality_tags (LIST), core_motivation, secret, voice, speech_constraints (LIST), background, voice_profile (JSON), canon_awareness (JSON) | UNIQUE on character_id; FULL_TEXT on display_name |
+| Character | character_id (key), display_name, aliases, character_origin, is_party_member, party_join_date, species, birth_date, gender, sexuality, chronological_age, apparent_age, height, hair_color, distinguishing_features (LIST), appearance_summary, typical_attire, nationality, social_class, occupation, origin_world, tags (LIST), abilities (LIST), languages_spoken (LIST), world_travel_history (LIST), default_cognition, personality_tags (LIST), core_motivation, secret, voice, speech_constraints (LIST), background, voice_profile (JSON), canon_awareness (JSON) | UNIQUE on character_id; FULL_TEXT on display_name |
 | CharacterSnapshot | character_ref, chapter_ref, location, gender, sexuality, chronological_age, apparent_age, height, hair_color, distinguishing_features (LIST), appearance_summary, typical_attire, nationality, social_class, occupation, physical, psychology, items (LIST), summary | 索引 on (character_ref, chapter_ref) |
+
+**Character.abilities 字段字典（LIST\）**
+
+每个列表元素为一个 JSON 对象，定义角色的一个结构化能力：
+
+| 字段 | 类型 | 必填 | 说明 | 约束/值域 |
+|------|:----:|:----:|------|-----------|
+| `name` | string | ✅ | 能力名称 | 如 `"法印：阿尔德"` |
+| `type` | string | ✅ | 能力分类 | `skill`(物理技能) / `magic`(魔法) / `hybrid`(混合) |
+| `power_source` | string | ✅ | 能量来源 | `magic` / `mana` / `chi` / `physics` / `bloodline` / `alchemy` / `technology` / `psionic` |
+| `world_scope` | string | ✅ | 跨世界适用范围 | `universal`(全域) / `conditional`(有条件) / `world_bound`(世界绑定) |
+| `bound_worlds` | list | ⚠️ | 绑定世界列表 | 仅 world_bound 时有效，不在列表中则 disabled |
+| `requires_power` | bool | | 是否需要外部能量 | 默认 false；true 时触发适配器判定 |
+| `acceptable_adapters` | list | | 可接受的适配器 ID | 仅 requires_power=true 时相关 |
+
+**与 tags 的关系**：tags 和 abilities 独立共存，Oracle 检定时双池查询。abilities 用于跨世界兼容性判定，tags 用于宽松语义匹配。
+
+**示例**：
+```json
+[
+  {"name":"基础剑术", "type":"skill", "power_source":"physics", "world_scope":"universal"},
+  {"name":"法印：阿尔德", "type":"magic", "power_source":"magic", "world_scope":"world_bound", "bound_worlds":["witcher-world"]}
+]
+```
 
 #### 3.4.3 派系域（Faction）
 
@@ -209,7 +233,27 @@ RelationshipEvent:
 
 | Vertex 类型 | 关键属性 | 索引 |
 |------|------|:----:|
-| BridgeEntry | entry_id (key), item_name, item_category, source_world, target_world, compatibility (full/degraded/reinterpreted/disabled), effect_description, stat_modifiers (JSON), local_name, local_understanding, misconceptions (LIST), reveal_triggers (LIST), perception_difficulty | UNIQUE on entry_id; 索引 on (source_world, target_world) |
+| BridgeEntry | entry_id (key), item_name, item_category (magical_weapon/mundane/technology/character_ability/power_adapter), source_world, target_world, compatibility, effect_description, stat_modifiers (JSON), ability_name, adapter_type, source_power, compatible_targets (LIST), conversion_efficiency, usage_limit, local_name, local_understanding, misconceptions (LIST), reveal_triggers (LIST), perception_difficulty | UNIQUE on entry_id; 索引 on (source_world, target_world) |
+
+**BridgeEntry 字段字典**（按 item_category 分组）：
+
+| 字段 | 通用 | 物品 | 能力 | 适配器 |
+|------|:----:|:----:|:----:|:------:|
+| `entry_id` | ✅ | ✅ | ✅ | ✅ |
+| `item_name` | ✅ | ✅ | ✅ | ✅ |
+| `item_category` | ✅ | ✅ | ✅ | ✅ |
+| `compatibility` | ✅ | ✅ | ✅ | — |
+| `effect_description` | ✅ | ✅ | ✅ | — |
+| `stat_modifiers` | ✅ | ✅ | ✅ | — |
+| `ability_name` | — | — | ✅ | — |
+| `adapter_type` | — | — | — | ✅ |
+| `source_power` | — | — | — | ✅ |
+| `compatible_targets` | — | — | — | ✅ |
+| `conversion_efficiency` | — | — | — | ✅ |
+| `usage_limit` | — | — | — | ✅ |
+| `local_name` | ✅ | ✅ | ✅ | — |
+| `local_understanding` | ✅ | ✅ | ✅ | ✅ |
+| `perception_difficulty` | ✅ | ✅ | ✅ | — |
 
 #### 3.4.8 规则域（OracleRule + SceneRuleSet）
 
@@ -436,7 +480,8 @@ CREATE PROPERTY Character.nationality STRING;
 CREATE PROPERTY Character.social_class STRING;
 CREATE PROPERTY Character.occupation STRING;
 CREATE PROPERTY Character.origin_world STRING;
-CREATE PROPERTY Character.tags LIST;                  -- 纯标签系统
+CREATE PROPERTY Character.tags LIST;                  -- 纯标签系统（向后兼容）
+CREATE PROPERTY Character.abilities LIST;              -- 🆕 结构化能力列表 LIST<JSON>
 CREATE PROPERTY Character.languages_spoken LIST;       -- 语言能力
 CREATE PROPERTY Character.world_travel_history LIST;   -- 去过哪些世界
 CREATE PROPERTY Character.default_cognition STRING;    -- 认知基线
@@ -622,17 +667,25 @@ CREATE INDEX ON Foreshadowing (code) UNIQUE;
 CREATE VERTEX TYPE BridgeEntry IF NOT EXISTS;
 CREATE PROPERTY BridgeEntry.entry_id STRING;
 CREATE PROPERTY BridgeEntry.item_name STRING;
-CREATE PROPERTY BridgeEntry.item_category STRING;     -- magical_weapon / mundane / technology
+CREATE PROPERTY BridgeEntry.item_category STRING;     -- magical_weapon/mundane/technology/character_ability/power_adapter
 CREATE PROPERTY BridgeEntry.source_world STRING;
 CREATE PROPERTY BridgeEntry.target_world STRING;
-CREATE PROPERTY BridgeEntry.compatibility STRING;     -- full / degraded / reinterpreted / disabled
+CREATE PROPERTY BridgeEntry.compatibility STRING;     -- full/degraded/reinterpreted/disabled
 CREATE PROPERTY BridgeEntry.effect_description STRING;
-CREATE PROPERTY BridgeEntry.stat_modifiers JSON;      -- {"power": -2, "duration": "halved"}
+CREATE PROPERTY BridgeEntry.stat_modifiers JSON;
+-- 🆕 能力相关
+CREATE PROPERTY BridgeEntry.ability_name STRING;      -- 用于 character_ability
+-- 🆕 适配器相关
+CREATE PROPERTY BridgeEntry.adapter_type STRING;      -- item/character_ability/bloodline
+CREATE PROPERTY BridgeEntry.source_power STRING;      -- 适配器产生能源
+CREATE PROPERTY BridgeEntry.compatible_targets LIST;   -- 可驱动哪些 power_source
+CREATE PROPERTY BridgeEntry.conversion_efficiency FLOAT; -- 0.0-1.0
+CREATE PROPERTY BridgeEntry.usage_limit STRING;
 CREATE PROPERTY BridgeEntry.local_name STRING;
 CREATE PROPERTY BridgeEntry.local_understanding STRING;
 CREATE PROPERTY BridgeEntry.misconceptions LIST;
 CREATE PROPERTY BridgeEntry.reveal_triggers LIST;
-CREATE PROPERTY BridgeEntry.perception_difficulty STRING;  -- easy / medium / hard
+CREATE PROPERTY BridgeEntry.perception_difficulty STRING;
 CREATE INDEX ON BridgeEntry (entry_id) UNIQUE;
 CREATE INDEX ON BridgeEntry (source_world, target_world) NOTUNIQUE;
 ```
