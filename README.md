@@ -22,8 +22,12 @@
 
 | 文件 | 用途 | 状态 |
 |------|------|:----:|
-| `project-design.md` | 完整项目设计 — 8图域+4文本域+1运行状态 | **已填充完成**（899行） |
-| `arcadedb-schema.md` | ArcadeDB 实现层 — Vertex/Edge/Document + DDL | **已填充完成**（762行） |
+| `docs/project-design.md` | 完整项目设计 — 8图域+4文本域+1运行状态 | **已填充完成** |
+| `docs/arcadedb-schema.md` | ArcadeDB 实现层 — Vertex/Edge/Document + DDL | **已填充完成** |
+| `scripts/ddl.sql` | 可执行 DDL 建表脚本 | 已生成 |
+| `scripts/init_db.py` | 自动建库建表脚本 | 已生成 |
+| `src/` | Python 后端源码 | 初始结构 |
+| `seed/` | 世界种子数据 | 待填充 |
 
 ---
 
@@ -45,7 +49,8 @@
 ## 数据库依赖
 
 - **ArcadeDB 26.5+**（`LSM_VECTOR` + `vector.fuse` + `GEOSPATIAL`）
-- **向量模型**：bge-m3（Ollama），1024 维 COSINE
+- **LLM**：本地 `qwen3:8b` / `qwen3:14b`（Ollama）+ 云端 DeepSeek / GPT
+- **向量模型**：`bge-m3`（Ollama），1024 维 COSINE
 
 ---
 

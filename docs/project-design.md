@@ -112,6 +112,10 @@
 - 通道边具有方向性：`World_A → World_B` 的稳定性可能不同于反向
 - 认知映射规则按 `(源世界, 目标世界, 物品类别)` 三元组索引
 
+**玩法维度**：`World.supported_dimensions` 声明本世界激活的玩法（adventure/naval_combat/mass_warfare/politics/nation_building/economy），未激活则不创建对应数据。
+
+**世界状态**：`World.status` 标记世界当前状态——`normal`（正常）/ `unstable`（动荡/文明退行）/ `destroyed`（已毁灭）/ `unknown`（未知）。影响穿越时的默认危险判定和资源稀缺程度。
+
 **通道类型分类**：
 
 | 通道类型 | 穿越方式 | 速度 | 举例 |
@@ -129,13 +133,16 @@
 **描述**：角色的完整档案，分四个层级——
 
 **① 身份层（存于 Character 顶点）**：
-`name`, `aliases`, `character_origin`（**canon** / **fanon** / **original**）,
+`display_name`, `aliases`, `character_origin`（**canon** / **fanon** / **original**）,
 `is_party_member`, `party_join_date`,
 `species`（人类/精灵/突变体等）, `birth_date`（本地历）,
 `gender`, `sexuality`, `chronological_age`, `apparent_age`,
-`height`, `hair_color`, `distinguishing_features`, `appearance_summary`, `typical_attire`,
+`height`, `hair_color`, `eye_color`, `distinguishing_features`, `appearance_summary`, `typical_attire`,
 `nationality`, `social_class`, `occupation`,
-`origin_world`（原生世界）
+`origin_world`（原生世界）,
+`era`（时代标记：modern / replicant / gestalt / automata / quantum，跨纪元同名区分）,
+`status`（生死状态：alive / dead / unknown）,
+`death_cause`（简要死因，详细场景走 Event）
 
 > Character 顶点保存**当前外貌**，直接读取即可。`CharacterSnapshot` 同时保存每次变化的历史快照——查当前走 Character，查历史走 Snapshot。
 
@@ -211,6 +218,7 @@
 | `fact_type` | event / item / character / location / concept |
 | `source_type` | **亲眼所见** / 道听途说 / 文献记载 / 推测 |
 | `confidence` | 可信度 0-100（亲眼最高，谣言最低） |
+| `remark` | 一句话原因：如"在第3场景听到斯内普说了'别太显眼'" |
 | `acquired_session` | 在哪个跑团会话中获得 |
 
 **认知可信度**：信源质量影响角色是否能准确判断。谣言可能导致错误行动，产生戏剧冲突。
@@ -804,15 +812,47 @@ ROUTE 边补充字段：travel_type(normal/warp/hyperlane/jump_drive), warp_time
 | 域 | 内容说明 | 检索需求 | 向量化 |
 |------|------|------|:-----:|
 | 世界观设定 | 各世界的设定文档、历史、文化、地理 | 语义搜索 + 关键词搜索 | ✅ |
-| 跑团日志 | 每次跑团会话的叙事正文 + 对话转录 | 语义搜索 + 关键词搜索（仅叙事正文） | ✅ |
+| 跑团日志 | 每次跑团会话的叙事正文 + 对话转录 + 结构化消息 | 语义搜索 + 关键词搜索（仅叙事正文） | ✅ |
 | 小说章节 | 自动生成或人工编写的小说章节省略 | 语义搜索 + 关键词搜索 | ✅ |
 | 规则文档 | Oracle 规则说明、检定系统文档 | 全文搜索为主，语义搜索为辅 | ❌ |
 
 **检索策略**：
 - **混合检索**：向量 + BM25 全文，使用 RRF（Reciprocal Rank Fusion）服务端融合
-- **向量化范围**：世界观设定、跑团日志（仅叙事正文）、小说章节需要向量化
-- 对话转录（transcript）不参与向量搜索
+- **向量化范围**：世界观设定、跑团日志叙事正文、小说章节需要向量化
+- 消息级对话（transcript/Message.content）不参与向量搜索
 - 规则文档以全文搜索为主，不需要向量化
+
+### SessionLog 元数据扩展
+
+每次跑团会话的完整元数据头：
+`session_id`, `session_number`, `title`, `summary`, `world`,
+`start_time`(现实开始), `end_time`(现实结束),
+`game_time_start`(游戏内时间起点), `game_time_end`(游戏内时间终点),
+`participants`(参与角色列表), `oracle_model`(AI模型标识或真人GM名), `status`(ongoing/completed/abandoned)
+
+### Message 消息流
+
+跑团中每一条交互记录为一个结构化 Message：
+- `message_id`, `session_id`, `scene_id`, `turn_number`
+- `message_type` — **gm_narration**(GM旁白) / **gm_response**(GM回应) / **player_action**(玩家动作) / **player_dialogue**(玩家对话) / **system_roll**(系统检定) / **oracle_result**(Oracle结果)
+- `speaker` — 发言角色ID（GM用"gm"）
+- `content` — 文本内容
+- `game_time`, `real_time`
+
+前端通过 `WHERE message_type` 过滤分窗显示。
+
+### Scene 场景
+
+介于Session和Turn之间的叙事单元：
+- `scene_id`, `session_id`, `scene_number`, `location`(地点), `characters_present`(在场角色), `summary`
+
+### SessionDelta 变更摘要
+
+Session 结束时自动聚合生成：物品获得/消耗/转让、关系变化、认知变化、派系变化、剧情线推进。存为 JSON Document。
+
+### ItemUsageLog 物品使用日志
+
+`item_id`, `used_by`, `used_in_session`, `used_in_scene`, `effect_description`, `consumed`(是否消耗)
 
 ### 小说生成管道
 
@@ -1032,6 +1072,72 @@ ROUTE 边补充字段：travel_type(normal/warp/hyperlane/jump_drive), warp_time
 - 通过正典校验的标记 `canon_checked: true`
 - 人工编辑后改为 `published` 状态
 
+### 6.7 LLM 路由策略
+
+系统将 LLM 调用按任务特性分为**本地执行**和**云端执行**两级。本地主力 ≤14B 参数模型（默认 8B），超出此容量的生成任务走云端 API。
+
+#### 6.7.1 本地模型选型
+
+| 用途 | 模型 | 显存(Q4) | Ollama 拉取 |
+|------|------|:--------:|------|
+| 向量 Embedding | `bge-m3`（~560M） | ~1.2 GB | `ollama pull bge-m3` |
+| 混合检索 Reranker | `bge-reranker-v2-m3` 或 `qwen3:0.6b` | ~1 GB | 小模型打分，毫秒级 |
+| **主力生成（默认）** | **`qwen3:8b`** | ~4.6 GB | `ollama pull qwen3:8b` |
+| 主力生成（高配） | `qwen3:14b` | ~8.3 GB | `ollama pull qwen3:14b` |
+
+**选型理由**：Qwen3 系列目前中文开源模型中本地能力最强，8B 在 8GB 显存流畅运行（~120 tok/s @ RTX 4070），支持 thinking/non-thinking 双模式。DeepSeek-R1 蒸馏系列的链式思考会增加不必要延迟，不适合延迟敏感的本地任务。
+
+**硬件适配**：
+
+| 显存 | 推荐配置 |
+|:----:|------|
+| 8 GB | `qwen3:8b` + `bge-m3` |
+| 12–16 GB | `qwen3:14b` + `bge-m3` |
+| ≥24 GB | `qwen3:14b` + `bge-m3` + 大上下文窗口 |
+
+**Ollama 关键配置**：
+```bash
+ollama pull qwen3:8b
+/set parameter num_ctx 32768    # 上下文窗口
+/set parameter num_predict 4096 # 最大生成长度
+```
+
+#### 6.7.2 本地模型负责
+
+分类/提取/模板填充型任务，不需要长文本连贯生成：
+
+| # | 功能 | 说明 |
+|:--:|------|------|
+| L1 | 向量 embedding | bge-m3（~560M），不占用 8B 配额 |
+| L2 | 混合检索 Reranker | cross-encoder 重排序 |
+| L3 | 查询改写 | 短文本转换 |
+| L4 | 叙事过滤 | 判定关键节点 |
+| L5 | Oracle 结果叙事化 | 概率结果→叙事文本 |
+| L6 | SessionDelta 摘要 | 变更 JSON→可读摘要 |
+| L7 | 偏离报告生成 | DeviationRecord→报告 |
+| L8 | 跨世界认知映射 | 物品→目标世界理解 |
+
+#### 6.7.3 云端模型负责（DeepSeek / GPT 等 API）
+
+长文本连贯生成和创造性写作任务，8B 模型质量不够：
+
+| # | 功能 | 原因 |
+|:--:|------|------|
+| C1 | GM 旁白/回应 | 综合场景/角色/剧情生成沉浸叙事 |
+| C2 | NPC 对话生成 | 角色声线一致、语境理解 |
+| C3 | 场景描述生成 | 氛围营造，8B 易空洞 |
+| C4 | 小说风格渲染（管道核心） | 结构化日志→完整叙事散文，需 POV 声线控制和文学质量 |
+| C5 | 正典校验 | 深度语义偏离检测 |
+
+#### 6.7.4 路由规则
+
+```
+调用请求 → 检查任务类型
+  ├─ L1–L8 → Ollama 本地推理
+  ├─ C1–C5 → 云端 API 调用
+  └─ 边界任务 → 先 Ollama，质量不达标则升云端
+```
+
 ---
 
 ## 七、变更流程
@@ -1059,7 +1165,7 @@ ROUTE 边补充字段：travel_type(normal/warp/hyperlane/jump_drive), warp_time
 
 ---
 
-*设计版本：v2.0 — 跨宇宙 TRPG + 小说生成*
+*设计版本：v2.1 — 跨宇宙 TRPG + 小说生成 + LLM 路由*
 
 ---
 
@@ -1077,14 +1183,26 @@ ROUTE 边补充字段：travel_type(normal/warp/hyperlane/jump_drive), warp_time
 
 ```
 data/
-  characters/{world}/     -- 按世界分目录
-  factions/{world}/
-  locations/{world}/
-  events/{world}.md       -- 时间线单文件
-  items/{world}/
-  monsters/{world}/
-  contracts/{world}/
-  sessions/{session_id}.md
+  worlds/{world}.md                        -- 世界元数据
+  characters/{world}/                      -- 角色
+  factions/{world}/                        -- 派系
+  locations/{world}/                       -- 地点
+  events/{world}.md                        -- 时间线
+  items/{world}/                           -- 物品
+  monsters/{world}/                        -- 怪物
+  contracts/{world}/                       -- 契约任务
+  conflicts/{world}/                       -- 战役冲突
+  ships/{world}/                           -- 舰船/舰队
+  cognition/{world}/                       -- 认知记录
+  relations/                               -- 关系变化日志
+    relationship_events/{session_id}.jsonl
+    faction_relation_events/{session_id}.jsonl
+  sessions/{session_id}/
+    session.md                             -- 元数据 + 叙事正文
+    messages.jsonl                         -- 消息流
+    scenes.jsonl                           -- 场景列表
+    delta.json                             -- 变更摘要
+    item_usage.jsonl                       -- 物品使用日志
 ```
 
 每条记录用 YAML 前置元数据 + Markdown 正文格式：
@@ -1134,11 +1252,11 @@ updated: "UC+11945.3"
 | DeviationRecord | `occurred_in_chapter` |
 | NovelChapter | `corresponding_session = "session_X"` |
 
-**关系边回滚**（需要 `closed_by_session` 字段）：
-- 删除本次创建的新边：`DELETE WHERE closed_by_session = "session_X"`
-- 恢复被本次关闭的旧边：`SET unified_until = NULL WHERE closed_by_session = "session_X"`
+**关系边回滚**（需要 `created_by_session` + `closed_by_session` 字段）：
+- 删除本次创建的新边：`DELETE WHERE created_by_session = "session_X"`
+- 恢复被本次关闭的旧边：`SET unified_until = NULL, closed_by_session = NULL WHERE closed_by_session = "session_X"`
 
-> 所有带 `unified_until` 的边记录 `closed_by_session` 字段，否则无法分辨"被这次关闭还是更早关闭"。
+> 每条边同时记录 `created_by_session`（创建者）和 `closed_by_session`（关闭者），否则无法分辨"被这次创建还是更早创建"。
 
 ### Turn 级微回滚
 
